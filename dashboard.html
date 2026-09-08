@@ -182,6 +182,15 @@
           </div>
         </div>
 
+        <!-- 简历版本管理（新增） -->
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f0f7ff;border:1px solid #cfe3f7;border-left:4px solid #2d7ff9;border-radius:6px;padding:11px 14px;margin:0 0 16px 0;">
+          <span style="font-weight:600;color:#1a5fb4;">📚 简历版本</span>
+          <select id="resumeVersionSelect" style="padding:6px 10px;border:1px solid #c0d6ee;border-radius:5px;font-size:14px;min-width:150px;background:#fff;"></select>
+          <button class="btn-sm" id="createVersionBtn">+ 新建版本</button>
+          <button class="btn-sm btn-danger" id="deleteVersionBtn">删除当前版本</button>
+          <span style="color:#5a7a99;font-size:13px;">切换后，网页自动填表将使用所选版本</span>
+        </div>
+
         <div class="resume-editor-grid">
           <!-- 优先信息 -->
           <div class="editor-card" id="card-priority">

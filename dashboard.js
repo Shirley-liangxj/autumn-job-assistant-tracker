@@ -10,6 +10,10 @@
   const STAGES = ['待投递', '已投递', '笔试', '一面', '二面', 'HR面', 'Offer', '已结束'];
   const RECORDS_STORAGE_KEY = 'autumnRecruitmentTracker.records.v1';
   const RESUME_STORAGE_KEY = 'autumnRecruitmentTracker.resume.v1';
+  // === 多版本简历（新增）===
+  const VERSIONS_STORAGE_KEY = 'autumnRecruitmentTracker.resumeVersions.v1';
+  const ACTIVE_VERSION_KEY = 'autumnRecruitmentTracker.activeResumeVersion.v1';
+  const DEFAULT_VERSION_NAME = '国央企通用版';
   const SAFETY_DB_NAME = 'autumnRecruitmentTracker.safety.v1';
   const APP_VERSION = '2.0.0';
 
@@ -100,6 +104,9 @@
   // ================= 全局状态 =================
   let records = [];
   let currentResume = DEFAULT_RESUME;
+  // === 多版本简历状态（新增）===
+  let resumeVersions = {};
+  let activeVersionName = DEFAULT_VERSION_NAME;
   let editingRecordId = null;
   let ocrWorker = null;
   let ocrFile = null;
@@ -504,7 +511,85 @@
       currentResume = DEFAULT_RESUME;
       await storageSet(RESUME_STORAGE_KEY, currentResume);
     }
+    await initVersionStore();
     renderResumeEditor();
+  }
+
+  // ============ 多版本简历核心逻辑（新增）============
+  async function initVersionStore() {
+    const vs = await storageGet(VERSIONS_STORAGE_KEY);
+    const active = await storageGet(ACTIVE_VERSION_KEY);
+    if (vs && typeof vs === 'object' && Object.keys(vs).length > 0) {
+      resumeVersions = vs;
+      activeVersionName = (active && vs[active]) ? active : Object.keys(vs)[0];
+      currentResume = resumeVersions[activeVersionName];
+      await storageSet(RESUME_STORAGE_KEY, currentResume); // 同步给侧边栏
+    } else {
+      resumeVersions = { [DEFAULT_VERSION_NAME]: currentResume };
+      activeVersionName = DEFAULT_VERSION_NAME;
+      await storageSet(VERSIONS_STORAGE_KEY, resumeVersions);
+      await storageSet(ACTIVE_VERSION_KEY, activeVersionName);
+    }
+    renderVersionBar();
+  }
+
+  async function saveCurrentToVersionStore() {
+    resumeVersions[activeVersionName] = currentResume;
+    await storageSet(VERSIONS_STORAGE_KEY, resumeVersions);
+    await storageSet(RESUME_STORAGE_KEY, currentResume);
+    await storageSet(ACTIVE_VERSION_KEY, activeVersionName);
+  }
+
+  function renderVersionBar() {
+    const sel = $('#resumeVersionSelect');
+    if (!sel) return;
+    sel.innerHTML = Object.keys(resumeVersions).map(n =>
+      `<option value="${escapeHtml(n)}" ${n === activeVersionName ? 'selected' : ''}>${escapeHtml(n)}</option>`
+    ).join('');
+  }
+
+  async function switchVersion(name) {
+    if (!resumeVersions[name]) return;
+    await saveCurrentToVersionStore();
+    activeVersionName = name;
+    currentResume = resumeVersions[name];
+    await storageSet(RESUME_STORAGE_KEY, currentResume);
+    await storageSet(ACTIVE_VERSION_KEY, activeVersionName);
+    renderResumeEditor();
+    renderVersionBar();
+    showToast(`✅ 已切换到「${name}」，填表将使用该版本`);
+  }
+
+  async function createVersion() {
+    const name = prompt('新版本名称（例如：私企V7 / 管培生版）：');
+    if (!name) return;
+    const n = name.trim();
+    if (!n) return;
+    if (resumeVersions[n]) { alert('该版本名已存在'); return; }
+    await saveCurrentToVersionStore();
+    resumeVersions[n] = JSON.parse(JSON.stringify(currentResume));
+    activeVersionName = n;
+    currentResume = resumeVersions[n];
+    await storageSet(VERSIONS_STORAGE_KEY, resumeVersions);
+    await storageSet(RESUME_STORAGE_KEY, currentResume);
+    await storageSet(ACTIVE_VERSION_KEY, activeVersionName);
+    renderResumeEditor();
+    renderVersionBar();
+    showToast(`✅ 已新建并切换到「${n}」（内容复制自上一版本，请再导入对应简历覆盖）`);
+  }
+
+  async function deleteActiveVersion() {
+    if (Object.keys(resumeVersions).length <= 1) { alert('至少保留一个版本'); return; }
+    if (!confirm(`确定删除版本「${activeVersionName}」？该版本内容将被移除。`)) return;
+    delete resumeVersions[activeVersionName];
+    activeVersionName = Object.keys(resumeVersions)[0];
+    currentResume = resumeVersions[activeVersionName];
+    await storageSet(VERSIONS_STORAGE_KEY, resumeVersions);
+    await storageSet(RESUME_STORAGE_KEY, currentResume);
+    await storageSet(ACTIVE_VERSION_KEY, activeVersionName);
+    renderResumeEditor();
+    renderVersionBar();
+    showToast(`✅ 已删除，当前版本：「${activeVersionName}」`);
   }
 
   function renderResumeEditor() {
@@ -718,8 +803,9 @@
 
     currentResume = updated;
     await storageSet(RESUME_STORAGE_KEY, currentResume);
+    await saveCurrentToVersionStore();
     saveSnapshot(records, currentResume);
-    showToast('🎉 简历资料库已保存！所有网页侧边栏已实时同步');
+    showToast(`🎉 「${activeVersionName}」已保存！所有网页侧边栏已实时同步`);
   }
 
   $('#saveAllResumeBtn').addEventListener('click', collectAndSaveResume);
@@ -748,8 +834,9 @@
         if (parsed && typeof parsed === 'object') {
           currentResume = parsed;
           await storageSet(RESUME_STORAGE_KEY, currentResume);
+          await saveCurrentToVersionStore();
           renderResumeEditor();
-          showToast('✅ 简历已成功导入并同步！');
+          showToast(`✅ 已导入到版本「${activeVersionName}」并同步！`);
         }
       } catch (err) {
         alert('导入失败：不是有效的 JSON 文件');
@@ -1165,6 +1252,13 @@
     handleUrlHash();
     await loadRecords();
     await loadResume();
+    // 绑定简历版本管理事件（新增）
+    const vSel = $('#resumeVersionSelect');
+    if (vSel) vSel.addEventListener('change', (e) => switchVersion(e.target.value));
+    const vNew = $('#createVersionBtn');
+    if (vNew) vNew.addEventListener('click', createVersion);
+    const vDel = $('#deleteVersionBtn');
+    if (vDel) vDel.addEventListener('click', deleteActiveVersion);
     updateSnapshotCount();
   }
 
